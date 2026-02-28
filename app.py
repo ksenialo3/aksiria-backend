@@ -60,6 +60,7 @@ def generate_text(prompt):
 @app.route('/generate', methods=['POST'])
 def generate():
     data = request.get_json()
+    print("RECEIVED JSON:", data)
     if not data:
         return jsonify({"error": "Нет данных"}), 400
 
