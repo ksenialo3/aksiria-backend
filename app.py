@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["https://aksiriatest1.tilda.ws"])
 
 FOLDER_ID = os.getenv('YANDEX_FOLDER_ID')
 print("FOLDER_ID repr:", repr(FOLDER_ID))
