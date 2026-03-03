@@ -70,6 +70,8 @@ def generate():
     tone = data.get('tone')
     keywords = data.get('keywords')
     social = data.get('social_network', 'VK')
+    goal = data.get('goal')
+    hesh = data.get('hesh') 
 
     if not all([brand, description, audience]):
         return jsonify({"error": "Заполните обязательные поля: бренд, описание, ЦА"}), 400
