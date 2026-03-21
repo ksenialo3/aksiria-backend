@@ -163,6 +163,19 @@ def login():
 
     return jsonify({'status': 'ok', 'user_id': user.id}), 200
 
+@app.route('/user/<int:user_id>', methods=['GET'])
+def get_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify({'error': 'Пользователь не найден'}), 404
+    return jsonify({
+        'id': user.id,
+        'company_name': user.company_name,
+        'target_audience': user.target_audience,
+        'tone_value': user.tone_value,
+        'extra_info': user.extra_info
+    })
+
 def build_prompt_from_user(user):
     parts = []
     if user.target_audience:
