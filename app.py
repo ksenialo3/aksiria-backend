@@ -12,7 +12,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, origins=["https://aksiriatest1.tilda.ws"])
+CORS(app)
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'aksiria.db')
