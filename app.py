@@ -7,6 +7,7 @@ import datetime
 import json
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
@@ -17,7 +18,7 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'aksiria.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'uploads')
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -25,6 +26,8 @@ db = SQLAlchemy(app)
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(200), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
     company_name = db.Column(db.String(200), nullable=False)
     industry = db.Column(db.String(100))
     other_industry = db.Column(db.String(200))
@@ -47,6 +50,7 @@ class User(db.Model):
     def to_dict(self):
         return {
             'id': self.id,
+            'email': self.email,
             'company_name': self.company_name,
             'industry': self.industry,
             'other_industry': self.other_industry,
@@ -69,9 +73,19 @@ GPT_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 def register():
     try:
         data = request.form
+        print("REGISTER DATA:", data)
+
         company_name = data.get('company_name')
-        if not company_name:
-            return jsonify({'error': 'Название компании обязательно'}), 400
+        email = data.get('email')
+        password = data.get('password')
+        if not company_name or not email or not password:
+            return jsonify({'error': 'Название компании, email и пароль обязательны'}), 400
+
+        # Проверка уникальности email
+        if User.query.filter_by(email=email).first():
+            return jsonify({'error': 'Пользователь с таким email уже существует'}), 400
+
+        password_hash = generate_password_hash(password)
 
         def save_file(file_key):
             file = request.files.get(file_key)
@@ -107,6 +121,8 @@ def register():
                 extra_info += f"Загруженные файлы: {', '.join(file_names)}\n"
 
         user = User(
+            email=email,
+            password_hash=password_hash,
             company_name=company_name,
             industry=data.get('industry'),
             other_industry=data.get('other_industry'),
@@ -133,6 +149,20 @@ def register():
         app.logger.error(f"Registration error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+    if not email or not password:
+        return jsonify({'error': 'Email и пароль обязательны'}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user or not check_password_hash(user.password_hash, password):
+        return jsonify({'error': 'Неверный email или пароль'}), 401
+
+    return jsonify({'status': 'ok', 'user_id': user.id}), 200
+
 def build_prompt_from_user(user):
     parts = []
     if user.target_audience:
@@ -144,7 +174,6 @@ def build_prompt_from_user(user):
     return "\n".join(parts)
 
 def generate_text(prompt):
-    """Отправляет запрос к YandexGPT и возвращает сгенерированный текст."""
     print("=== ОТЛАДКА ===")
     print("FOLDER_ID:", FOLDER_ID)
     print("API_KEY (первые 5 символов):", API_KEY[:5] if API_KEY else "None")
@@ -172,7 +201,6 @@ def generate_text(prompt):
             }
         ]
     }
-    print("REQUEST DATA:", data)
     try:
         response = requests.post(GPT_URL, headers=headers, json=data, timeout=60)
         response.raise_for_status()
@@ -188,7 +216,6 @@ def generate_text(prompt):
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    # Поддержка как JSON, так и form-data
     if request.is_json:
         data = request.get_json()
     else:
@@ -196,22 +223,19 @@ def generate():
 
     print("RECEIVED DATA:", data)
 
-    # Сначала пытаемся загрузить пользователя, чтобы подставить недостающие поля
+    # Загружаем пользователя, если есть user_id
     user_id = data.get('user_id')
     if user_id:
         try:
             user = db.session.get(User, int(user_id))
             if user:
-                # Если поля не заданы в запросе, берём из БД
                 if not data.get('audience') and user.target_audience:
                     data['audience'] = user.target_audience
                 if not data.get('tone') and user.tone_value:
                     data['tone'] = user.tone_value
-                # Можно добавить и другие поля
         except Exception as e:
             app.logger.error(f"Error loading user {user_id}: {e}")
 
-    # Теперь извлекаем поля (с возможными подставленными значениями)
     brand = data.get('brand')
     description = data.get('description')
     audience = data.get('audience')
@@ -221,27 +245,9 @@ def generate():
     goal = data.get('goal')
     hesh = data.get('hesh')
 
-    # Проверяем обязательные поля
     if not all([brand, description, audience]):
         return jsonify({"error": "Заполните обязательные поля: бренд, описание, ЦА"}), 400
 
-    # Если передан user_id, пытаемся загрузить пользователя
-    user_id = data.get('user_id')
-    user_context = ""
-    if user_id:
-        try:
-            user = User.query.get(int(user_id))
-            if user:
-                user_context = build_prompt_from_user(user)
-                # Дополняем поля из БД, если они не заданы в запросе
-                if not tone and user.tone_value:
-                    tone = user.tone_value
-                if not audience and user.target_audience:
-                    audience = user.target_audience
-        except Exception as e:
-            app.logger.error(f"Error loading user {user_id}: {e}")
-
-    # Формируем финальный промпт
     prompt = f"""
     Вводные данные:
     Название бренда: {brand}
@@ -252,7 +258,6 @@ def generate():
     Ключевые слова: {keywords}
     Социальная сеть: {social}
     Хештеги: {hesh}
-    {user_context}
 
     Инструкции по тексту (ВНИМАНИЕ, ЭТО ВАЖНО):
 
@@ -283,9 +288,7 @@ def generate():
 
     post_text = generate_text(prompt)
     print("ОТВЕТ СЕРВЕРА:", {"text": post_text})
-    return jsonify({
-        "text": post_text
-    })
+    return jsonify({"text": post_text})
 
 with app.app_context():
     db.create_all()
