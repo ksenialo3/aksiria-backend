@@ -3,11 +3,61 @@ import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
+import datetime
+import json
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app, origins=["https://aksiriatest1.tilda.ws"])
+
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'aksiria.db')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'uploads')
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
+
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+db = SQLAlchemy(app)
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    company_name = db.Column(db.String(200), nullable=False)
+    industry = db.Column(db.String(100))
+    other_industry = db.Column(db.String(200))
+    target_audience = db.Column(db.Text)
+    target_audience_file = db.Column(db.String(300))
+    tone_method = db.Column(db.String(20))
+    tone_value = db.Column(db.Text)
+    tone_analyze_data = db.Column(db.Text)
+    tone_file = db.Column(db.String(300))
+    social_networks = db.Column(db.String(200))
+    vk_url = db.Column(db.String(300))
+    telegram_url = db.Column(db.String(300))
+    dzen_url = db.Column(db.String(300))
+    logo = db.Column(db.String(300))
+    brandbook = db.Column(db.String(300))
+    extra_info = db.Column(db.Text)
+    api_integration = db.Column(db.String(10))
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'company_name': self.company_name,
+            'industry': self.industry,
+            'other_industry': self.other_industry,
+            'target_audience': self.target_audience,
+            'tone_method': self.tone_method,
+            'tone_value': self.tone_value,
+            'tone_analyze_data': self.tone_analyze_data,
+            'social_networks': self.social_networks,
+            'extra_info': self.extra_info,
+            'api_integration': self.api_integration,
+        }
 
 FOLDER_ID = os.getenv('YANDEX_FOLDER_ID')
 print("FOLDER_ID repr:", repr(FOLDER_ID))
@@ -15,12 +65,91 @@ API_KEY = os.getenv('YANDEX_API_KEY')
 GPT_MODEL = "yandexgpt-lite"
 GPT_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
 
+@app.route('/register', methods=['POST'])
+def register():
+    try:
+        data = request.form
+        company_name = data.get('company_name')
+        if not company_name:
+            return jsonify({'error': 'Название компании обязательно'}), 400
+
+        def save_file(file_key):
+            file = request.files.get(file_key)
+            if file and file.filename:
+                filename = secure_filename(file.filename)
+                unique = f"{datetime.datetime.utcnow().timestamp()}_{filename}"
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique)
+                file.save(filepath)
+                return unique
+            return None
+
+        target_audience_file = save_file('target_audience_file')
+        tone_file = save_file('tone_file')
+        logo = save_file('logo')
+        brandbook = save_file('brandbook')
+
+        # Обработка множественных файлов (примеры постов)
+        example_files = request.files.getlist('examples_files')
+        example_links = data.get('examples_links')
+        extra_info = data.get('extra_info', '')
+        if example_files or example_links:
+            extra_info = (extra_info or '') + '\n\n=== Примеры постов ===\n'
+            if example_links:
+                extra_info += f"Ссылки: {example_links}\n"
+            if example_files:
+                file_names = []
+                for f in example_files:
+                    if f.filename:
+                        fn = secure_filename(f.filename)
+                        unique = f"{datetime.datetime.utcnow().timestamp()}_{fn}"
+                        f.save(os.path.join(app.config['UPLOAD_FOLDER'], unique))
+                        file_names.append(unique)
+                extra_info += f"Загруженные файлы: {', '.join(file_names)}\n"
+
+        user = User(
+            company_name=company_name,
+            industry=data.get('industry'),
+            other_industry=data.get('other_industry'),
+            target_audience=data.get('target_audience'),
+            target_audience_file=target_audience_file,
+            tone_method=data.get('tone_method'),
+            tone_value=data.get('tone_value') if data.get('tone_method') in ['select', 'custom'] else None,
+            tone_analyze_data=data.get('tone_analyze') if data.get('tone_method') == 'analyze' else None,
+            tone_file=tone_file,
+            social_networks=data.get('social_networks'),
+            vk_url=data.get('vk_url'),
+            telegram_url=data.get('telegram_url'),
+            dzen_url=data.get('dzen_url'),
+            logo=logo,
+            brandbook=brandbook,
+            extra_info=extra_info,
+            api_integration=data.get('api_integration')
+        )
+        db.session.add(user)
+        db.session.commit()
+
+        return jsonify({'status': 'ok', 'user_id': user.id}), 200
+    except Exception as e:
+        app.logger.error(f"Registration error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def build_prompt_from_user(user):
+    parts = []
+    if user.target_audience:
+        parts.append(f"Целевая аудитория: {user.target_audience}")
+    if user.tone_value:
+        parts.append(f"Тон общения: {user.tone_value}")
+    if user.extra_info:
+        parts.append(f"Дополнительная информация: {user.extra_info}")
+    return "\n".join(parts)
+
 def generate_text(prompt):
+    """Отправляет запрос к YandexGPT и возвращает сгенерированный текст."""
     print("=== ОТЛАДКА ===")
     print("FOLDER_ID:", FOLDER_ID)
     print("API_KEY (первые 5 символов):", API_KEY[:5] if API_KEY else "None")
     print("PROMPT:", prompt)
-    
+
     headers = {
         "Authorization": f"Api-Key {API_KEY}",
         "Content-Type": "application/json"
@@ -35,7 +164,7 @@ def generate_text(prompt):
         "messages": [
             {
                 "role": "system",
-    "text": "Ты — креативный директор и SMM-стратег с 10-летним опытом. Твои посты всегда попадают в тренды, собирают высокий охват и вовлечение. Ты ненавидишь канцелярит, штампы и безликую «ИИ-речь». Твоя задача — упаковать продукт в интересную историю, используя современные речевые модули и триггеры ЦА. Твой главный навык — следовать брифу клиента, но упаковывать это в креатив и чёткий призыв к действию. Твои тексты сравнивают с живыми людьми, их невозможно отличить от постов лучших копирайтеров. Напиши пост для выбранной социальной сети от имени бренда."
+                "text": "Ты — креативный директор и SMM-стратег с 10-летним опытом. Твои посты всегда попадают в тренды, собирают высокий охват и вовлечение. Ты ненавидишь канцелярит, штампы и безликую «ИИ-речь». Твоя задача — упаковать продукт в интересную историю, используя современные речевые модули и триггеры ЦА. Твой главный навык — следовать брифу клиента, но упаковывать это в креатив и чёткий призыв к действию. Твои тексты сравнивают с живыми людьми, их невозможно отличить от постов лучших копирайтеров. Напиши пост для выбранной социальной сети от имени бренда."
             },
             {
                 "role": "user",
@@ -59,11 +188,30 @@ def generate_text(prompt):
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    data = request.get_json()
-    print("RECEIVED JSON:", data)
-    if not data:
-        return jsonify({"error": "Нет данных"}), 400
+    # Поддержка как JSON, так и form-data
+    if request.is_json:
+        data = request.get_json()
+    else:
+        data = request.form.to_dict()
 
+    print("RECEIVED DATA:", data)
+
+    # Сначала пытаемся загрузить пользователя, чтобы подставить недостающие поля
+    user_id = data.get('user_id')
+    if user_id:
+        try:
+            user = db.session.get(User, int(user_id))
+            if user:
+                # Если поля не заданы в запросе, берём из БД
+                if not data.get('audience') and user.target_audience:
+                    data['audience'] = user.target_audience
+                if not data.get('tone') and user.tone_value:
+                    data['tone'] = user.tone_value
+                # Можно добавить и другие поля
+        except Exception as e:
+            app.logger.error(f"Error loading user {user_id}: {e}")
+
+    # Теперь извлекаем поля (с возможными подставленными значениями)
     brand = data.get('brand')
     description = data.get('description')
     audience = data.get('audience')
@@ -71,11 +219,29 @@ def generate():
     keywords = data.get('keywords')
     social = data.get('social_network', 'VK')
     goal = data.get('goal')
-    hesh = data.get('hesh') 
+    hesh = data.get('hesh')
 
+    # Проверяем обязательные поля
     if not all([brand, description, audience]):
         return jsonify({"error": "Заполните обязательные поля: бренд, описание, ЦА"}), 400
 
+    # Если передан user_id, пытаемся загрузить пользователя
+    user_id = data.get('user_id')
+    user_context = ""
+    if user_id:
+        try:
+            user = User.query.get(int(user_id))
+            if user:
+                user_context = build_prompt_from_user(user)
+                # Дополняем поля из БД, если они не заданы в запросе
+                if not tone and user.tone_value:
+                    tone = user.tone_value
+                if not audience and user.target_audience:
+                    audience = user.target_audience
+        except Exception as e:
+            app.logger.error(f"Error loading user {user_id}: {e}")
+
+    # Формируем финальный промпт
     prompt = f"""
     Вводные данные:
     Название бренда: {brand}
@@ -86,6 +252,7 @@ def generate():
     Ключевые слова: {keywords}
     Социальная сеть: {social}
     Хештеги: {hesh}
+    {user_context}
 
     Инструкции по тексту (ВНИМАНИЕ, ЭТО ВАЖНО):
 
@@ -119,6 +286,9 @@ def generate():
     return jsonify({
         "text": post_text
     })
+
+with app.app_context():
+    db.create_all()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
