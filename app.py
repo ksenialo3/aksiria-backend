@@ -81,7 +81,6 @@ def register():
         if not company_name or not email or not password:
             return jsonify({'error': 'Название компании, email и пароль обязательны'}), 400
 
-        # Проверка уникальности email
         if User.query.filter_by(email=email).first():
             return jsonify({'error': 'Пользователь с таким email уже существует'}), 400
 
@@ -102,7 +101,6 @@ def register():
         logo = save_file('logo')
         brandbook = save_file('brandbook')
 
-        # Обработка множественных файлов (примеры постов)
         example_files = request.files.getlist('examples_files')
         example_links = data.get('examples_links')
         extra_info = data.get('extra_info', '')
@@ -236,7 +234,6 @@ def generate():
 
     print("RECEIVED DATA:", data)
 
-    # Загружаем пользователя, если передан user_id
     user_id = data.get('user_id')
     user = None
     if user_id:
@@ -245,41 +242,34 @@ def generate():
         except Exception as e:
             app.logger.error(f"Error loading user {user_id}: {e}")
 
-    # Базовые поля, которые должны быть в запросе (обязательны)
     description = data.get('description')
     if not description:
         return jsonify({"error": "Не указано описание товара или услуги"}), 400
 
-    # Извлекаем остальные поля
     goal = data.get('goal')
     keywords = data.get('keywords')
     social = data.get('social_network', 'VK')
     hesh = data.get('hesh')
 
-    # brand: если не передан, берём company_name из БД
     brand = data.get('brand')
     if not brand and user:
         brand = user.company_name
     if not brand:
         return jsonify({"error": "Не указано название бренда"}), 400
 
-    # audience: если не передана, берём из БД
     audience = data.get('audience')
     if not audience and user and user.target_audience:
         audience = user.target_audience
     if not audience:
         return jsonify({"error": "Не указана целевая аудитория"}), 400
 
-    # tone: если не передан, берём из БД
     tone = data.get('tone')
     if not tone and user and user.tone_value:
         tone = user.tone_value
 
-    # Дополнительная информация (user_context) для промпта
     user_context = ""
-    if user:
-        if user.extra_info:
-            user_context = f"Дополнительная информация о бизнесе: {user.extra_info}"
+    if user and user.extra_info:
+        user_context = f"Дополнительная информация о бизнесе: {user.extra_info}"
 
     prompt = f"""
     Вводные данные:
@@ -315,3 +305,9 @@ def generate():
 
     post_text = generate_text(prompt)
     return jsonify({"text": post_text})
+
+with app.app_context():
+    db.create_all()
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
