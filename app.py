@@ -174,15 +174,26 @@ def get_user(user_id):
         'extra_info': user.extra_info
     })
 
-def build_prompt_from_user(user):
-    parts = []
-    if user.target_audience:
-        parts.append(f"Целевая аудитория: {user.target_audience}")
-    if user.tone_value:
-        parts.append(f"Тон общения: {user.tone_value}")
-    if user.extra_info:
-        parts.append(f"Дополнительная информация: {user.extra_info}")
-    return "\n".join(parts)
+@app.route('/change-password', methods=['POST'])
+def change_password():
+    data = request.get_json()
+    user_id = data.get('user_id')
+    old_password = data.get('old_password')
+    new_password = data.get('new_password')
+
+    if not user_id or not old_password or not new_password:
+        return jsonify({'error': 'Все поля обязательны'}), 400
+
+    user = db.session.get(User, int(user_id))
+    if not user:
+        return jsonify({'error': 'Пользователь не найден'}), 404
+
+    if not check_password_hash(user.password_hash, old_password):
+        return jsonify({'error': 'Неверный старый пароль'}), 401
+
+    user.password_hash = generate_password_hash(new_password)
+    db.session.commit()
+    return jsonify({'status': 'ok'}), 200
 
 def generate_text(prompt):
     print("=== ОТЛАДКА ===")
