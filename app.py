@@ -14,8 +14,15 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'aksiria.db')
+database_url = os.environ.get('DATABASE_URL')
+if database_url:
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+else:
+    basedir = os.path.abspath(os.path.dirname(__file__))
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'aksiria.db')
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.path.join(basedir, 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
@@ -319,6 +326,11 @@ def generate():
 
 with app.app_context():
     db.create_all()
+@app.route('/init-db', methods=['GET'])
+def init_db():
+    """Временный эндпоинт для создания таблиц (вызвать один раз)"""
+    db.create_all()
+    return jsonify({"status": "ok", "message": "Tables created"})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
