@@ -4,5 +4,6 @@ requests
 python-dotenv
 gunicorn
 flask-sqlalchemy
-werkzeug 
+werkzeug
+psycopg2-binary
  
