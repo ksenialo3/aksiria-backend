@@ -14,13 +14,16 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# Определяем базовую директорию для файлов
+basedir = os.path.abspath(os.path.dirname(__file__))
+
+# Настройка базы данных: если есть DATABASE_URL (PostgreSQL), используем её, иначе SQLite
 database_url = os.environ.get('DATABASE_URL')
 if database_url:
     if database_url.startswith('postgres://'):
         database_url = database_url.replace('postgres://', 'postgresql://', 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 else:
-    basedir = os.path.abspath(os.path.dirname(__file__))
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'aksiria.db')
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -245,6 +248,7 @@ def generate_text(prompt):
 
 @app.route('/generate', methods=['POST'])
 def generate():
+    # Парсим JSON или form-data
     if request.is_json:
         data = request.get_json()
     else:
@@ -324,11 +328,13 @@ def generate():
     post_text = generate_text(prompt)
     return jsonify({"text": post_text})
 
+# Создаём таблицы в контексте приложения (только если их нет)
 with app.app_context():
     db.create_all()
+
+# Временный эндпоинт для инициализации БД (можно удалить после первого использования)
 @app.route('/init-db', methods=['GET'])
 def init_db():
-    """Временный эндпоинт для создания таблиц (вызвать один раз)"""
     db.create_all()
     return jsonify({"status": "ok", "message": "Tables created"})
 
